@@ -40,6 +40,11 @@ Install the Python requirements using PIP, which are located in the requirements
 Running
 =======
 
-::
+Request export (once per 24h)::
 
     python layer-export.py --app-id production/XXXX --token YYYY
+
+
+Update `decrypt.sh` and run::
+
+    sh decrypt.sh
