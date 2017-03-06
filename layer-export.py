@@ -3,6 +3,7 @@ from __future__ import print_function
 import json
 import os.path
 import sys
+import urllib.request
 from datetime import date
 from time import sleep
 
@@ -34,9 +35,11 @@ class LayerExport(object):
     def __init__(self, app_id, bearer_token):
         self.app_uuid = self._normalize_id(app_id)
         self.bearer_token = bearer_token
+        self.setup()
         self.register_key()
         self.request_export()
         self.get_export()
+        self.get_downloads()
 
     def _log(self, message):
         click.echo(message)
@@ -44,13 +47,19 @@ class LayerExport(object):
     def _normalize_id(self, id):
         return id.split('/')[-1]
 
+    def setup(self):
+        self.directory = 'export'
+        self.downloads_directory = 'export/downloads'
+        if not os.path.exists(self.downloads_directory):
+            os.makedirs(self.downloads_directory)
+
     def register_key(self):
         self._log('Registering Public Key...')
 
         if not os.path.isfile("key.public") or not os.path.isfile("key.private"):
             self.key = RSA.generate(2048)
-            key_public = self.key.publickey().exportKey('PEM')
-            key_private = self.key.exportKey('PEM')
+            key_public = self.key.publickey().exportKey('PEM').decode("utf-8")
+            key_private = self.key.exportKey('PEM').decode("utf-8")
 
             with open("key.public", 'w') as content_file:
                 content_file.write(key_public)
@@ -78,17 +87,40 @@ class LayerExport(object):
                 sleep(60)
             else:
                 break
-            # TODO: handle file
+
+        urllib.request.urlretrieve(export['download_url'], self.directory + '/export.enc.tar.gz')
+
+        self._log('ENCRYPTED_AES_KEY: ' + export['encrypted_aes_key'])
+        self._log('AES_IV: ' + export['aes_iv'])
+        click.confirm('Please manually decode and continue. Continue?', abort=True)
 
     def request_export(self):
         self._log('Requesting export...')
         exports = self._raw_request('get', 'exports')
         if exports:
-            export_date = dateutil.parser.parse(exports[-1]['created_at'])
+            export_date = dateutil.parser.parse(exports[0]['created_at'])
             if export_date.date() == date.today():
                 self.export_id = exports[-1]['id']
                 return
         self.export_id = self._raw_request('post', 'exports')['id']
+
+    def get_downloads(self):
+        self._log('Getting downloads...')
+        i = 1
+
+        with open(self.directory + '/export.json', 'r') as f:
+            content = json.loads(f.read())
+            for item in content:
+                for message in item['messages']:
+                    for part in message.get('parts', []):
+                        if part.get('content', {}).get('download_url'):
+                            urllib.request.urlretrieve(part['content']['download_url'],
+                                                       '{}/{}'.format(self.downloads_directory, i))
+                            part['content']['download_url'] = i
+                            i += 1
+
+        with open(self.directory + '/export.json', 'w') as f:
+            f.write(json.dumps(content))
 
     def _get_layer_uri(self, *suffixes):
         """
